@@ -28,6 +28,14 @@ pnpm dev
 
 브라우저에서 `http://localhost:3000`을 엽니다.
 
+기본 실행과 빌드는 Vercel이 요구하는 Next.js 출력물(`.next`)을 생성합니다. Cloudflare Sites용 빌드가 필요할 때만 별도 명령을 사용합니다.
+
+```bash
+pnpm dev:sites
+pnpm build:sites
+pnpm start:sites
+```
+
 ## 품질 확인
 
 ```bash
@@ -38,7 +46,7 @@ pnpm build
 
 테스트는 날짜 경계, 긴급도, 정렬·필터, 자연어 입력, 저장소 마이그레이션, 날씨 공급자 계약과 주요 화면 구성을 검증합니다.
 
-빌드 결과를 로컬 Cloudflare 런타임에서 확인할 때는 다음 명령을 사용합니다.
+Next.js 프로덕션 빌드를 로컬에서 확인할 때는 다음 명령을 사용합니다.
 
 ```bash
 pnpm build
