@@ -9,6 +9,7 @@ import {
   getTaskUrgency,
   getTodayTasks,
   parseKoreanTaskInput,
+  ApiWeatherProvider,
   MockWeatherProvider,
   createCampusPlanStorage,
 } from "@/lib/campusplan/index.ts";
@@ -19,9 +20,12 @@ import {
 - `filters.ts`: 오늘·이번 주·전체 및 과목·유형·완료 필터
 - `natural-language.ts`: 오늘·내일·모레 해석
 - `weather.ts`: 실제 API와 교체 가능한 `WeatherProvider` 및 모의 날씨
+- `api-weather.ts`: 브라우저에서 내부 날씨 API를 호출하는 공급자
+- `k-skill-weather.ts`: 기상청 단기예보 응답 정규화
+- `map.ts`: k-skill 카카오 장소 검색 응답 정규화와 클라이언트 호출
 - `storage.ts`: 버전이 있는 localStorage 직렬화와 검증
 
-실제 날씨 API를 연결할 때는 `WeatherProvider.getWeather()`를 구현하는 새 클래스를 만들고 UI에 주입합니다. API 비밀키는 이 브라우저 모듈에 저장하지 않고 서버 또는 서버리스 프록시에서 관리해야 합니다.
+현재 앱은 `ApiWeatherProvider`가 `/api/weather`를 호출하고, 서버 라우트가 k-skill 공개 프록시를 통해 기상청 단기예보를 조회합니다. 앱에는 비밀키가 없으며 공개 프록시 실패 시 `MockWeatherProvider` 데이터가 대체 화면으로 남습니다.
 
 ## 검증
 

@@ -3,18 +3,21 @@
 import {
   FormEvent,
   KeyboardEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import {
+  ApiWeatherProvider,
   DEFAULT_MOCK_WEATHER,
   INJE_GIMHAE_CAMPUS,
-  MockWeatherProvider,
   getTaskUrgency,
   parseKoreanTaskInput,
+  searchCampusPlaces,
   toLocalDate,
+  type CampusPlace,
   type LocalDate,
   type WeatherCondition,
   type WeatherSnapshot,
@@ -27,10 +30,12 @@ type AppView =
   | "calendar"
   | "subjects"
   | "settings"
+  | "map"
   | "weather";
 type TaskType = "과제" | "시험" | "개인";
 type TaskFilter = "전체" | TaskType;
 type WeatherStatus = "ready" | "loading" | "error" | "offline";
+type MapStatus = "idle" | "loading" | "ready" | "empty" | "error";
 
 type Task = {
   id: string;
@@ -80,6 +85,7 @@ type WeatherDay = {
 
 type WeatherData = {
   location: string;
+  icon: string;
   temperature: number;
   feelsLike: number;
   condition: string;
@@ -169,7 +175,7 @@ const defaultSettings: Settings = {
   locationMode: "campus",
 };
 
-const weatherProvider = new MockWeatherProvider({ latencyMs: 350 });
+const weatherProvider = new ApiWeatherProvider();
 
 function weatherIcon(condition: WeatherCondition) {
   if (condition === "rain" || condition === "shower" || condition === "thunderstorm") return "☂";
@@ -184,6 +190,7 @@ function toWeatherData(snapshot: WeatherSnapshot): WeatherData {
   const fetchedAt = new Date(snapshot.fetchedAt);
   return {
     location: snapshot.location.name,
+    icon: weatherIcon(current.condition),
     temperature: current.temperature,
     feelsLike: current.feelsLike ?? current.temperature,
     condition: current.conditionLabel,
@@ -216,6 +223,19 @@ function toWeatherData(snapshot: WeatherSnapshot): WeatherData {
 }
 
 const initialWeather = toWeatherData(DEFAULT_MOCK_WEATHER);
+
+const CAMPUS_MAP_PLACE: CampusPlace = {
+  id: INJE_GIMHAE_CAMPUS.id,
+  name: INJE_GIMHAE_CAMPUS.name,
+  category: "대학교",
+  address: "경상남도 김해시 인제로 197",
+  roadAddress: "경남 김해시 인제로 197",
+  phone: "",
+  kakaoUrl: "",
+  latitude: INJE_GIMHAE_CAMPUS.latitude,
+  longitude: INJE_GIMHAE_CAMPUS.longitude,
+  distanceMeters: 0,
+};
 
 function startOfDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -388,6 +408,19 @@ export function CampusPlanApp() {
   const [calendarDate, setCalendarDate] = useState(startOfDay(new Date()));
   const importRef = useRef<HTMLInputElement>(null);
 
+  const loadWeather = useCallback(async () => {
+    setWeatherStatus("loading");
+    try {
+      const snapshot = await weatherProvider.getWeather(INJE_GIMHAE_CAMPUS);
+      setWeather(toWeatherData(snapshot));
+      setWeatherStatus("ready");
+      return true;
+    } catch {
+      setWeatherStatus("offline");
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks, subjects, settings }));
   }, [tasks, subjects, settings]);
@@ -402,6 +435,11 @@ export function CampusPlanApp() {
     const timer = window.setTimeout(() => setSnackbar(null), 10000);
     return () => window.clearTimeout(timer);
   }, [snackbar]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadWeather(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadWeather]);
 
   const subjectMap = useMemo(
     () => Object.fromEntries(subjects.map((subject) => [subject.id, subject])),
@@ -475,15 +513,12 @@ export function CampusPlanApp() {
   };
 
   const refreshWeather = async () => {
-    setWeatherStatus("loading");
-    try {
-      const snapshot = await weatherProvider.getWeather(INJE_GIMHAE_CAMPUS);
-      setWeather(toWeatherData(snapshot));
-      setWeatherStatus("ready");
-      setSnackbar("날씨 정보를 업데이트했습니다");
-    } catch {
-      setWeatherStatus("error");
-    }
+    const updated = await loadWeather();
+    setSnackbar(
+      updated
+        ? "날씨 정보를 업데이트했습니다"
+        : "실시간 날씨를 불러오지 못해 임시 정보를 표시합니다",
+    );
   };
 
   const saveSubject = (subject: Subject) => {
@@ -547,6 +582,7 @@ export function CampusPlanApp() {
     if (view === "timetable") return <TimetableView {...shared} classes={defaultClasses} />;
     if (view === "calendar") return <CalendarView {...shared} date={calendarDate} setDate={setCalendarDate} />;
     if (view === "subjects") return <SubjectsView {...shared} editSubject={setSubjectModal} />;
+    if (view === "map") return <MapView />;
     if (view === "settings") {
       return (
         <SettingsView
@@ -572,6 +608,7 @@ export function CampusPlanApp() {
         subjects={subjects}
         subjectFilter={subjectFilter}
         setSubjectFilter={setSubjectFilter}
+        weather={weather}
         navigate={navigate}
         addSubject={() => setSubjectModal("new")}
       />
@@ -584,6 +621,7 @@ export function CampusPlanApp() {
           submit={addQuickTask}
           openAdd={() => setTaskModal({ mode: "add" })}
           openWeather={() => navigate("weather")}
+          weather={weather}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           navigate={navigate}
@@ -659,6 +697,7 @@ function Sidebar({
   subjects,
   subjectFilter,
   setSubjectFilter,
+  weather,
   navigate,
   addSubject,
 }: {
@@ -666,6 +705,7 @@ function Sidebar({
   subjects: Subject[];
   subjectFilter: string;
   setSubjectFilter: (id: string) => void;
+  weather: WeatherData;
   navigate: (view: AppView) => void;
   addSubject: () => void;
 }) {
@@ -674,6 +714,7 @@ function Sidebar({
     { id: "week", label: "이번 주", icon: "▥" },
     { id: "timetable", label: "시간표", icon: "▤" },
     { id: "calendar", label: "전체 일정", icon: "□" },
+    { id: "map", label: "캠퍼스 지도", icon: "⌖" },
   ];
   return (
     <aside className="sidebar" aria-label="주요 메뉴">
@@ -699,8 +740,8 @@ function Sidebar({
         <button className="outline-action" type="button" onClick={addSubject}>+ 과목 추가</button>
       </div>
       <button className="sidebar-weather" type="button" onClick={() => navigate("weather")}>
-        <span className="weather-symbol">☂</span>
-        <span><strong>김해시 24°</strong><small>오후에 비가 올 수 있어요</small></span>
+        <span className="weather-symbol">{weather.icon ?? "☁"}</span>
+        <span><strong>김해시 {weather.temperature}°</strong><small>{weather.condition}</small></span>
       </button>
       <button className={view === "settings" ? "sidebar-settings active" : "sidebar-settings"} type="button" onClick={() => navigate("settings")}>
         <Icon>⚙</Icon> 설정
@@ -717,6 +758,7 @@ function Header({
   submit,
   openAdd,
   openWeather,
+  weather,
   menuOpen,
   setMenuOpen,
   navigate,
@@ -728,6 +770,7 @@ function Header({
   submit: () => void;
   openAdd: () => void;
   openWeather: () => void;
+  weather: WeatherData;
   menuOpen: boolean;
   setMenuOpen: (value: boolean) => void;
   navigate: (view: AppView) => void;
@@ -762,7 +805,7 @@ function Header({
       </div>
       <div className="header-actions">
         <button className="icon-button" type="button" aria-label="알림"><Icon>♢</Icon><span className="notification-dot" /></button>
-        <button className="weather-button" type="button" onClick={openWeather} aria-label="캠퍼스 날씨 보기"><span>☂</span><strong>24°</strong><small>비 70%</small></button>
+        <button className="weather-button" type="button" onClick={openWeather} aria-label="캠퍼스 날씨 보기"><span>{weather.icon}</span><strong>{weather.temperature}°</strong><small>{weather.condition}</small></button>
         <button className="primary-button desktop-add" type="button" onClick={openAdd}>+ 일정 추가</button>
         <button className="avatar" type="button" onClick={() => setMenuOpen(!menuOpen)} aria-expanded={menuOpen} aria-label="내 정보 메뉴">민</button>
         {menuOpen && (
@@ -781,6 +824,7 @@ function MobileNavigation({ view, navigate }: { view: AppView; navigate: (view: 
     { id: "today", label: "오늘", icon: "▣" },
     { id: "timetable", label: "시간표", icon: "◷" },
     { id: "calendar", label: "캘린더", icon: "▦" },
+    { id: "map", label: "지도", icon: "⌖" },
     { id: "settings", label: "내 정보", icon: "♙" },
   ];
   return (
@@ -1174,6 +1218,152 @@ function Toggle({ label, checked, setChecked }: { label: string; checked: boolea
   return <label className="toggle-row"><span>{label}</span><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} /><i aria-hidden="true" /></label>;
 }
 
+function MapView() {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<MapStatus>("idle");
+  const [places, setPlaces] = useState<CampusPlace[]>([]);
+  const [selectedPlace, setSelectedPlace] = useState<CampusPlace>(CAMPUS_MAP_PLACE);
+  const quickSearches = ["카페", "편의점", "병원", "버스정류장"];
+
+  const runSearch = async (searchTerm: string) => {
+    const normalized = searchTerm.trim();
+    if (normalized.length < 2) {
+      setStatus("empty");
+      return;
+    }
+
+    setQuery(normalized);
+    setStatus("loading");
+    try {
+      const results = await searchCampusPlaces(normalized, {
+        latitude: INJE_GIMHAE_CAMPUS.latitude,
+        longitude: INJE_GIMHAE_CAMPUS.longitude,
+        radius: 3_000,
+      });
+      setPlaces(results);
+      setStatus(results.length > 0 ? "ready" : "empty");
+      if (results[0]) setSelectedPlace(results[0]);
+    } catch {
+      setStatus("error");
+    }
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runSearch(query);
+  };
+
+  return (
+    <div className="view map-view">
+      <PageHeading
+        title="캠퍼스 지도"
+        subtitle="인제대학교 주변 장소를 검색하고 지도에서 확인하세요"
+        aside={<span className="today-marker">K-SKILL + OPENSTREETMAP</span>}
+      />
+      <form className="map-search" onSubmit={submit} role="search">
+        <label className="sr-only" htmlFor="map-search-input">캠퍼스 주변 장소 검색</label>
+        <input
+          id="map-search-input"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="카페, 편의점, 병원처럼 검색해 보세요"
+        />
+        <button className="primary-button" type="submit" disabled={status === "loading" || query.trim().length < 2}>
+          {status === "loading" ? "검색 중…" : "검색"}
+        </button>
+      </form>
+      <div className="map-quick-searches" aria-label="빠른 장소 검색">
+        {quickSearches.map((item) => (
+          <button key={item} type="button" onClick={() => void runSearch(item)}>{item}</button>
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedPlace(CAMPUS_MAP_PLACE);
+            setQuery("");
+            setPlaces([]);
+            setStatus("idle");
+          }}
+        >
+          캠퍼스 중심
+        </button>
+      </div>
+      <div className="campus-map-layout">
+        <section className="campus-map-panel" aria-label={`${selectedPlace.name} 지도`}>
+          <iframe
+            src={openStreetMapEmbedUrl(selectedPlace.latitude, selectedPlace.longitude)}
+            title={`${selectedPlace.name} 주변 OpenStreetMap 지도`}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+          />
+          <div className="map-selected-place">
+            <span className="map-pin" aria-hidden="true">⌖</span>
+            <div>
+              <small>{selectedPlace.category || "선택한 장소"}</small>
+              <strong>{selectedPlace.name}</strong>
+              <p>{selectedPlace.roadAddress || selectedPlace.address}</p>
+            </div>
+            <a
+              href={`https://www.openstreetmap.org/?mlat=${selectedPlace.latitude}&mlon=${selectedPlace.longitude}#map=17/${selectedPlace.latitude}/${selectedPlace.longitude}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              큰 지도
+            </a>
+          </div>
+        </section>
+        <section className="map-results" aria-live="polite">
+          <div className="section-heading"><h2>주변 장소</h2><span>{places.length > 0 ? `${places.length}곳` : "3km 이내"}</span></div>
+          {status === "idle" && <div className="map-empty"><span>⌕</span><strong>찾을 장소를 검색하세요</strong><p>검색 결과는 가까운 순서로 표시됩니다.</p></div>}
+          {status === "loading" && <div className="map-empty"><span>…</span><strong>주변 장소를 찾고 있어요</strong></div>}
+          {status === "empty" && <div className="map-empty"><span>!</span><strong>검색 결과가 없습니다</strong><p>다른 검색어를 입력해 보세요.</p></div>}
+          {status === "error" && <div className="map-empty error"><span>!</span><strong>장소 정보를 불러오지 못했습니다</strong><button type="button" onClick={() => void runSearch(query)}>다시 시도</button></div>}
+          {status === "ready" && (
+            <div className="map-result-list">
+              {places.map((place) => (
+                <article key={place.id} className={selectedPlace.id === place.id ? "selected" : ""}>
+                  <button type="button" onClick={() => setSelectedPlace(place)}>
+                    <span className="map-result-number">{formatDistance(place.distanceMeters)}</span>
+                    <span className="map-result-copy">
+                      <strong>{place.name}</strong>
+                      <small>{place.category || "장소"}</small>
+                      <p>{place.roadAddress || place.address}</p>
+                    </span>
+                  </button>
+                  {place.kakaoUrl && <a href={place.kakaoUrl} target="_blank" rel="noreferrer" aria-label={`${place.name} 카카오맵에서 보기`}>↗</a>}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+      <p className="map-attribution">지도 © OpenStreetMap contributors · 장소 정보 Kakao via k-skill proxy</p>
+    </div>
+  );
+}
+
+function openStreetMapEmbedUrl(latitude: number, longitude: number): string {
+  const longitudeDelta = 0.012;
+  const latitudeDelta = 0.007;
+  const params = new URLSearchParams({
+    bbox: [
+      longitude - longitudeDelta,
+      latitude - latitudeDelta,
+      longitude + longitudeDelta,
+      latitude + latitudeDelta,
+    ].join(","),
+    layer: "mapnik",
+    marker: `${latitude},${longitude}`,
+  });
+  return `https://www.openstreetmap.org/export/embed.html?${params}`;
+}
+
+function formatDistance(distanceMeters: number | null): string {
+  if (distanceMeters === null) return "거리 미상";
+  if (distanceMeters < 1_000) return `${Math.round(distanceMeters)}m`;
+  return `${(distanceMeters / 1_000).toFixed(1)}km`;
+}
+
 function WeatherView(props: ViewProps & { refresh: () => void; setStatus: (status: WeatherStatus) => void }) {
   return (
     <div className="view weather-view">
@@ -1189,7 +1379,7 @@ function WeatherView(props: ViewProps & { refresh: () => void; setStatus: (statu
           </div>
           <WeatherAlert dismissible />
           <section className="forecast-section"><div className="section-heading"><h2>시간별 날씨</h2><span>다음 6시간</span></div><div className="hourly-forecast-grid">{props.weather.hours.map((hour) => <article key={hour.time}><span>{hour.time}</span><b>{hour.icon}</b><strong>{hour.temperature}°</strong><p>{hour.condition}</p><small>강수 {hour.precipitation}%</small></article>)}</div></section>
-          <section className="forecast-section"><div className="section-heading"><h2>주간 날씨</h2><span>7일 예보</span></div><div className="daily-forecast-list">{props.weather.days.map((day) => { const date = addDays(new Date(), day.offset); return <article key={day.offset}><div><strong>{day.offset === 0 ? "오늘" : weekdays[date.getDay()] + "요일"}</strong><small>{date.getMonth() + 1}.{date.getDate()}</small></div><b>{day.icon}</b><span>{day.condition}</span><strong>{day.high}° / {day.low}°</strong><small>강수 {day.precipitation}%</small></article>; })}</div></section>
+          <section className="forecast-section"><div className="section-heading"><h2>주간 날씨</h2><span>{props.weather.days.length}일 예보</span></div><div className="daily-forecast-list">{props.weather.days.map((day) => { const date = addDays(new Date(), day.offset); return <article key={day.offset}><div><strong>{day.offset === 0 ? "오늘" : weekdays[date.getDay()] + "요일"}</strong><small>{date.getMonth() + 1}.{date.getDate()}</small></div><b>{day.icon}</b><span>{day.condition}</span><strong>{day.high}° / {day.low}°</strong><small>강수 {day.precipitation}%</small></article>; })}</div></section>
           <section className="weather-schedule-section"><div className="section-heading"><h2>날씨와 내 일정</h2><span>준비가 필요한 일정</span></div><div className="weather-related-card"><span>☂</span><div><strong>디자인씽킹 · 오늘 14:00</strong><p>수업 종료 무렵 비 가능성이 있어요.</p></div><button type="button" onClick={() => props.navigate("today")}>일정 보기</button></div><div className="weather-related-card"><span>△</span><div><strong>동아리 야외 행사 · 금요일 17:00</strong><p>소나기 가능성 60% · 실내 대안을 확인하세요.</p></div><button type="button" onClick={() => props.navigate("week")}>이번 주 보기</button></div></section>
           {process.env.NODE_ENV !== "production" && (
             <div className="weather-dev-tools" aria-label="날씨 상태 시험 도구"><small>개발용 날씨 상태 확인</small><button type="button" onClick={() => props.setStatus("ready")}>정상</button><button type="button" onClick={() => props.setStatus("loading")}>로딩</button><button type="button" onClick={() => props.setStatus("error")}>오류</button><button type="button" onClick={() => props.setStatus("offline")}>오프라인</button></div>

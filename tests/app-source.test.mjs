@@ -15,6 +15,7 @@ test("주요 화면과 기능이 앱에 연결되어 있다", () => {
     "SubjectsView",
     "SettingsView",
     "WeatherView",
+    "MapView",
     "TaskModal",
     "TaskDetail",
     "localStorage",
@@ -27,6 +28,7 @@ test("주요 화면과 기능이 앱에 연결되어 있다", () => {
 test("날씨 공급자 교체 지점과 보안 원칙을 유지한다", async () => {
   const provider = await readFile(new URL("../lib/campusplan/weather.ts", import.meta.url), "utf8");
   assert.match(provider, /class MockWeatherProvider/);
+  assert.match(app, /ApiWeatherProvider/);
   assert.doesNotMatch(app, /client[_-]?secret|api[_-]?key|x-ncp-apigw-api-key/i);
 });
 
